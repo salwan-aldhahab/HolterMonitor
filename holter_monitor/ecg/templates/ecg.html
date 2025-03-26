@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Live ECG</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+
+        canvas {
+            background-color: #111;
+            border: 2px solid #444;
+            margin-top: 20px;
+        }
+
+        h2 {
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Real-Time ECG</h2>
+    <canvas id="ecgChart" width="900" height="400"></canvas>
+
+    <script>
+        const ctx = document.getElementById('ecgChart').getContext('2d');
+        const BUFFER_SIZE = 1000;
+        let ecgBuffer = Array(BUFFER_SIZE).fill(0);
+
+        const ecgChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({ length: BUFFER_SIZE }, (_, i) => i),
+                datasets: [{
+                    label: 'ECG Signal',
+                    data: ecgBuffer,
+                    borderColor: 'lime',
+                    backgroundColor: 'rgba(0,255,0,0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.2
+                }]
+            },
+            options: {
+                responsive: true,
+                animation: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        display: false
+                    },
+                    y: {
+                        min: 0,
+                        max: 4095
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: 'white'
+                        }
+                    }
+                }
+            }
+        });
+
+        const ws = new WebSocket("ws://" + window.location.host + "/ws/ecg/");
+
+        ws.onopen = () => {
+            console.log("✅ WebSocket connected");
+        };
+
+        {% comment %} ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                const incoming = msg.filtered || msg.ecg;
+
+                if (Array.isArray(incoming)) {
+                    console.log("📈 ECG:", incoming.slice(0, 5));
+                    ecgBuffer = ecgBuffer.slice(incoming.length).concat(incoming);
+                    ecgChart.data.datasets[0].data = ecgBuffer;
+                    ecgChart.update();
+                } else {
+                    console.warn("⚠️ Invalid ECG data format");
+                }
+            } catch (e) {
+                console.error("❌ Error parsing message:", e);
+            }
+        }; {% endcomment %}
+
+        {% comment %} ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                const incoming = msg.filtered || msg.ecg;
+        
+                console.log("📈 ECG received (first 5):", incoming?.slice?.(0, 5));
+        
+                if (Array.isArray(incoming)) {
+                    ecgBuffer = ecgBuffer.slice(incoming.length).concat(incoming);
+                    chart.data.datasets[0].data = ecgBuffer;
+                    chart.update();
+                } else {
+                    console.warn("⚠️ No valid ECG array in message:", event.data);
+                }
+            } catch (e) {
+                console.error("❌ Error parsing ECG:", e);
+            }
+        };         {% endcomment %}
+
+        ws.onmessage = (event) => {
+            console.log("📬 WebSocket message received:", event.data);
+        
+            try {
+                const msg = JSON.parse(event.data);
+                const incoming = msg.filtered || msg.ecg;
+        
+                if (Array.isArray(incoming)) {
+                    console.log("📈 ECG received (first 5):", incoming.slice(0, 5));
+                    ecgBuffer = ecgBuffer.slice(incoming.length).concat(incoming);
+                    ecgChart.data.datasets[0].data = ecgBuffer;
+                    ecgChart.update();
+                    
+                } else {
+                    console.warn("⚠️ No valid ECG array in message:", msg);
+                }
+            } catch (e) {
+                console.error("❌ Error parsing message:", e);
+                console.log("💥 Raw message:", event.data);
+            }
+        };        
+
+        ws.onerror = (e) => console.error("WebSocket error:", e);
+        ws.onclose = () => console.warn("WebSocket closed");
+    </script>
+</body>
+</html>
