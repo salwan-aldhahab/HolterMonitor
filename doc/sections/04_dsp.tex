@@ -1,0 +1,96 @@
+%==============================================================================
+\section{Signal Processing Pipeline}
+%==============================================================================
+
+Raw ECG captured from a wearable, battery-powered node is noisy: it suffers from
+baseline wander (slow drift as the patient breathes and moves), 50/60\,Hz mains
+interference, muscle (EMG) noise, and occasional motion artefacts. The function
+\texttt{filter\_ecg\_signal()} in \texttt{ecg/filters.py} cleans each incoming
+batch before it is broadcast. It is built on NumPy, SciPy's signal toolbox
+(\texttt{butter}, \texttt{sosfiltfilt}, \texttt{iirnotch}, \texttt{savgol\_filter},
+\texttt{find\_peaks}, \texttt{welch}) and PyWavelets.
+
+The default sampling rate is \texttt{fs = 250}\,Hz, matching the firmware. The
+pipeline runs the eight stages shown in Figure~\ref{fig:dsp} and described below.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[node distance=5.5mm]
+    \node[stage] (s0) {\textbf{0. Outlier clipping} -- robust clip to
+        $\text{median} \pm 5\,\text{MAD}$};
+    \node[stage, below=of s0] (s1) {\textbf{1. Baseline-wander removal} --
+        segmented polynomial fit + 0.5\,Hz high-pass (Butterworth, SOS)};
+    \node[stage, below=of s1] (s2) {\textbf{2. Three-band filtering} --
+        wide 0.5--45\,Hz $\cdot$ QRS 8--20\,Hz $\cdot$ P/T 0.5--10\,Hz};
+    \node[stage, below=of s2] (s3) {\textbf{3. Adaptive QRS weighting} --
+        combine bands $0.3 / 0.5 / 0.2$ using a smoothed QRS mask};
+    \node[stage, below=of s3] (s4) {\textbf{4. Powerline removal} --
+        auto-detect 50/60\,Hz, cascaded notch on harmonics $1\times,2\times,3\times$};
+    \node[stage, below=of s4] (s5) {\textbf{5. Wavelet denoising} --
+        \texttt{sym6}, level-dependent soft thresholding};
+    \node[stage, below=of s5] (s6) {\textbf{6. Adaptive smoothing} --
+        SNR-based Savitzky--Golay or 35\,Hz low-pass};
+    \node[stage, below=of s6] (s7) {\textbf{7. R-peak-preserving outlier replace}
+        -- rolling median/MAD, peaks protected};
+    \node[stage, below=of s7] (s8) {\textbf{8. Re-centre \& clip} --
+        centre on 2048, clip to ADC range 0--4095};
+
+    \foreach \a/\b in {s0/s1,s1/s2,s2/s3,s3/s4,s4/s5,s5/s6,s6/s7,s7/s8}
+        \draw[flow] (\a) -- (\b);
+
+    \node[hw, left=8mm of s0, minimum width=18mm] (in) {raw\\\scriptsize ecg[]};
+    \node[fe, left=8mm of s8, minimum width=18mm] (out) {clean\\\scriptsize filtered[]};
+    \draw[flow] (in) -- (s0);
+    \draw[flow] (s8) -- (out);
+  \end{tikzpicture}
+  \caption{The eight-stage \texttt{filter\_ecg\_signal()} pipeline. Each batch of
+  raw samples flows top-to-bottom and emerges as a cleaned, ADC-scaled array.}
+  \label{fig:dsp}
+\end{figure}
+
+\subsection*{Stage details}
+\begin{description}[leftmargin=0pt,style=nextline]
+  \item[0. Robust outlier clipping] Values are clipped to
+        $\text{median} \pm 5\sigma$, where $\sigma$ is estimated from the median
+        absolute deviation (MAD, scaled by $1.4826$). This removes gross spikes
+        without being skewed by them, unlike a mean/standard-deviation clip.
+  \item[1. Baseline-wander removal] For batches longer than five seconds the
+        signal is detrended with a piecewise (segmented) polynomial fit to track
+        non-stationary drift; then a 0.5\,Hz Butterworth high-pass
+        (second-order-sections, zero-phase \texttt{sosfiltfilt}) removes the
+        remainder.
+  \item[2. Three-band filtering] The signal is split into three Butterworth
+        band-passes tuned to different ECG features: a \emph{wide} band
+        (0.5--45\,Hz) preserving overall morphology, a \emph{QRS} band (8--20\,Hz)
+        isolating the sharp ventricular spike, and a \emph{P/T} band (0.5--10\,Hz)
+        capturing the slower atrial and repolarisation waves.
+  \item[3. Adaptive QRS weighting] A QRS energy mask is built with a sliding
+        adaptive threshold ($\text{mean} + 1.8\,\text{std}$ over 1.5\,s windows)
+        and smoothed. The three bands are recombined as
+        $0.3\cdot\text{wide} + 0.5\cdot\text{QRS}\!\cdot\!\text{mask}
+        + 0.2\cdot\text{P/T}\!\cdot\!(1-\text{mask})$, so the QRS band dominates
+        during beats and the gentler bands dominate between them.
+  \item[4. Powerline removal] If the mains frequency is not given, it is
+        auto-detected via Welch power-spectral-density peaks near 50 or 60\,Hz.
+        Cascaded \texttt{iirnotch} filters (two Q-factors, 35 and 50) then notch
+        out the fundamental and its 2nd and 3rd harmonics.
+  \item[5. Wavelet denoising] A \texttt{sym6} (Symlet-6) wavelet decomposition with
+        level-dependent soft thresholding suppresses broadband noise while
+        preserving ECG morphology; low-frequency detail is thresholded gently and
+        high-frequency detail more aggressively.
+  \item[6. Adaptive smoothing] The signal-to-noise ratio is estimated; very noisy
+        batches get a short ($\approx$40\,ms) Savitzky--Golay smooth, moderately
+        noisy batches a 35\,Hz low-pass, and clean batches are left untouched.
+  \item[7. R-peak-preserving outlier replacement] R-peaks are located with the QRS
+        band and an adaptive height threshold. A rolling median/MAD test then
+        replaces residual outliers, but explicitly \emph{protects} the detected
+        R-peak regions so the diagnostically important spikes are not flattened.
+  \item[8. Re-centre and clip] Finally the signal is centred on 2048 (the middle of
+        the 12-bit ADC range) and clipped to integer codes $0$--$4095$, matching
+        the dashboard's fixed $y$-axis.
+\end{description}
+
+\paragraph{Output contract.} The function always returns a list of integers in
+$[0,4095]$. Short batches (fewer than 20 samples) are returned unchanged, and any
+stage that fails (for example wavelet reconstruction on an awkward length) falls
+back gracefully so a single bad batch never breaks the stream.

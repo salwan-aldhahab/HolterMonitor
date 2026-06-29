@@ -1,0 +1,244 @@
+%==============================================================================
+\section{Hardware \& Firmware}
+%==============================================================================
+
+\subsection{Signal chain}
+The heart's electrical activity reaches the digital domain through the chain shown
+in Figure~\ref{fig:wiring}. Three electrodes (right arm, left arm, right leg
+reference) connect to the \textbf{AD8232}, a single-lead, integrated ECG analog
+front-end. The AD8232 performs instrumentation amplification, a built-in
+right-leg-drive to reject common-mode interference, and band-pass filtering,
+producing a single-ended output centred in the ESP32's input range. That output
+drives \texttt{GPIO36} (ADC1 channel 0, the input-only ``VP'' pin), which the
+ESP32 samples with its 12-bit ADC, yielding integer codes in the range
+$0$--$4095$.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[node distance=14mm and 22mm]
+    \node[hw, minimum width=20mm] (ra)  {RA};
+    \node[hw, minimum width=20mm, below=6mm of ra] (la) {LA};
+    \node[hw, minimum width=20mm, below=6mm of la] (rl) {RL (ref)};
+    \node[hw, right=of la, minimum width=30mm, minimum height=26mm] (afe) {AD8232\\\scriptsize ECG front-end};
+    \node[hw, right=of afe, minimum width=30mm, minimum height=26mm] (esp) {ESP32};
+    \node[fe, right=of esp, minimum width=26mm] (net) {Wi-Fi\\\scriptsize 2.4\,GHz};
+
+    \draw[flow] (ra) -- (afe);
+    \draw[flow] (la) -- (afe);
+    \draw[flow] (rl) -- (afe);
+    \draw[flow] (afe) -- (esp)
+        node[midway,above,lbl,align=center]{analog out\\$\rightarrow$ GPIO36};
+    \draw[flow] (esp) -- (net)
+        node[midway,above,lbl,align=center]{JSON\\batches};
+
+    \node[lbl, below=2mm of esp, align=center]
+        {3.3\,V supply $\cdot$ 12-bit ADC (0--4095)};
+  \end{tikzpicture}
+  \caption{Hardware signal chain: electrodes $\rightarrow$ AD8232 $\rightarrow$
+  ESP32 ADC on GPIO36 $\rightarrow$ Wi-Fi.}
+  \label{fig:wiring}
+\end{figure}
+
+\begin{table}[h]
+  \centering
+  \small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} \\
+    \midrule
+    Microcontroller        & ESP32 (Wi-Fi 2.4\,GHz) \\
+    Analog front-end       & AD8232 single-lead ECG \\
+    ADC input pin          & GPIO36 (ADC1\_CH0, input only) \\
+    ADC resolution         & 12-bit, codes 0--4095 \\
+    Sampling rate          & $\approx$250\,Hz (\texttt{SAMPLE\_DELAY\_MS = 4}) \\
+    Batch size             & 250 samples (\texttt{SAMPLE\_COUNT}) \\
+    Batch period           & $\approx$1\,s per transmission \\
+    Transport              & WebSocket over Wi-Fi, server port 8000 \\
+    Endpoint               & \texttt{ws://<server>:8000/ws/ecg/} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Key acquisition parameters, taken from the firmware.}
+  \label{tab:hwparams}
+\end{table}
+
+\subsection{Wiring schematic}
+At the connector level the build is deliberately minimal: the firmware only ever
+calls \texttt{analogRead(36)}, so just three wires are required between the AD8232
+module and the ESP32 --- power, ground and the analog output.
+Figure~\ref{fig:schematic} shows the connections. The AD8232's lead-off detection
+and shutdown pins (\texttt{LO+}, \texttt{LO-}, \texttt{SDN}) are left unconnected
+because the firmware does not read them; they are optional inputs for detecting a
+detached electrode.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[font=\small,
+      pin/.style={font=\footnotesize\ttfamily, inner sep=1.5pt},
+      wire/.style={thick}]
+    % electrodes (left)
+    \node[hw, minimum width=16mm] (era) {RA};
+    \node[hw, minimum width=16mm, below=4mm of era] (ela) {LA};
+    \node[hw, minimum width=16mm, below=4mm of ela] (erl) {RL};
+    \node[lbl, above=1mm of era] {electrode pads};
+
+    % AD8232 module (middle) with explicit pin anchors
+    \node[hw, right=22mm of ela, minimum width=34mm, minimum height=42mm,
+          align=center] (afe) {\textbf{AD8232}\\\scriptsize ECG front-end};
+    % left-side pins (electrode inputs)
+    \node[pin, anchor=east] (p_ra) at (afe.west |- era) {RA\,$\circ$};
+    \node[pin, anchor=east] (p_la) at (afe.west |- ela) {LA\,$\circ$};
+    \node[pin, anchor=east] (p_rl) at (afe.west |- erl) {RL\,$\circ$};
+    % right-side pins
+    \node[pin, anchor=west] (p_out) at ($(afe.east)+(0,0.9)$)  {$\circ$\,OUTPUT};
+    \node[pin, anchor=west] (p_33)  at ($(afe.east)+(0,0.3)$)  {$\circ$\,3.3V};
+    \node[pin, anchor=west] (p_gnd) at ($(afe.east)+(0,-0.3)$) {$\circ$\,GND};
+    \node[pin, anchor=west, text=gray] (p_lo)  at ($(afe.east)+(0,-0.9)$)
+        {$\circ$\,LO+/LO-/SDN};
+    \node[lbl, text=gray, below=1mm of afe] {(LO+, LO-, SDN: unused)};
+
+    % ESP32 (right) with explicit pin anchors
+    \node[hw, right=42mm of afe, minimum width=30mm, minimum height=42mm,
+          align=center] (esp) {\textbf{ESP32}};
+    \node[pin, anchor=west] (e_36)  at ($(esp.west)+(0,0.9)$)  {GPIO36\,$\circ$};
+    \node[pin, anchor=west] (e_33)  at ($(esp.west)+(0,0.3)$)  {3V3\,$\circ$};
+    \node[pin, anchor=west] (e_gnd) at ($(esp.west)+(0,-0.3)$) {GND\,$\circ$};
+    \node[lbl, below=1mm of esp, align=center] {ADC1\_CH0 (VP)\\12-bit, 0--4095};
+
+    % electrode wires
+    \draw[wire] (era.east) -- (p_ra.west);
+    \draw[wire] (ela.east) -- (p_la.west);
+    \draw[wire] (erl.east) -- (p_rl.west);
+
+    % AD8232 -> ESP32 (the three real connections)
+    \draw[wire, accent] (p_out.east) -- ++(0.4,0) |- (e_36.west)
+        node[pos=0.25,above,lbl]{analog ECG};
+    \draw[wire] (p_33.east)  -- ++(0.9,0) |- (e_33.west);
+    \draw[wire] (p_gnd.east) -- ++(0.6,0) |- (e_gnd.west);
+  \end{tikzpicture}
+  \caption{Connector-level wiring. Three electrode pads feed the AD8232; only three
+  wires reach the ESP32 --- \texttt{OUTPUT}$\rightarrow$\texttt{GPIO36},
+  \texttt{3.3V}$\rightarrow$\texttt{3V3} and \texttt{GND}$\rightarrow$\texttt{GND}.
+  The lead-off/shutdown pins are left unconnected.}
+  \label{fig:schematic}
+\end{figure}
+
+\subsection{Firmware behaviour}
+The firmware
+(\texttt{arduino/websocket\_ecg\_send\_data/websocket\_ecg\_send\_data.ino})
+runs three Arduino libraries: \texttt{WiFi.h} for connectivity,
+\texttt{ArduinoWebsockets} for the WebSocket client, and \texttt{ArduinoJson} for
+serialisation. On boot it joins the Wi-Fi network and opens a WebSocket to the
+server. The main loop then repeatedly:
+
+\begin{enumerate}[noitemsep]
+  \item reads 250 ADC samples from \texttt{GPIO36}, pausing 4\,ms between samples
+        (so each batch spans about one second of signal);
+  \item packs the samples into a JSON object \texttt{\{"ecg":[\,\ldots\,]\}};
+  \item sends the JSON over the WebSocket and polls the connection;
+  \item if the socket has dropped, it transparently reconnects.
+\end{enumerate}
+
+The acquisition loop itself is shown below.
+
+\begin{lstlisting}[style=cpp,caption={ESP32 sampling and transmit loop (abridged).}]
+#define ECG_PIN 36
+#define SAMPLE_COUNT 250
+#define SAMPLE_DELAY_MS 4        // ~250 Hz sampling rate
+
+void loop() {
+  if (!client.available()) {     // auto-reconnect if dropped
+    connectToWebSocket();
+    delay(1000);
+    return;
+  }
+
+  int ecg_values[SAMPLE_COUNT];
+  for (int i = 0; i < SAMPLE_COUNT; i++) {
+    ecg_values[i] = analogRead(ECG_PIN);   // 12-bit: 0..4095
+    delay(SAMPLE_DELAY_MS);
+  }
+
+  StaticJsonDocument<4096> doc;
+  JsonArray ecg_array = doc.createNestedArray("ecg");
+  for (int i = 0; i < SAMPLE_COUNT; i++) ecg_array.add(ecg_values[i]);
+
+  String json;
+  serializeJson(doc, json);
+  client.send(json);             // -> ws://<server>:8000/ws/ecg/
+  client.poll();
+}
+\end{lstlisting}
+
+\paragraph{Configuration.} The Wi-Fi credentials and the server's IP address are
+compile-time constants near the top of the sketch. Before flashing, set them for
+your environment:
+\begin{lstlisting}[style=cpp,numbers=none]
+const char* ssid                  = "<YOUR_WIFI_SSID>";
+const char* password              = "<YOUR_WIFI_PASSWORD>";
+const char* websocket_server_host = "<YOUR_PC_IP>";   // e.g. 192.168.1.20
+const int   websocket_server_port = 8000;
+\end{lstlisting}
+\emph{Note:} the firmware in the repository hard-codes a real SSID, password and
+IP. These are credentials and should be replaced with placeholders or moved to a
+secrets header before sharing the code (see Section~\ref{sec:limitations}).
+
+\subsection{Wearable enclosure}
+The electronics are housed in a small enclosure worn against the torso, with the
+three electrode leads routed to standard chest positions and the ESP32 and a
+battery sitting in the body of the case. Figure~\ref{fig:case} gives a conceptual
+view of the assembly and electrode placement.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[scale=1.0]
+    % torso silhouette
+    \draw[rounded corners=14pt, fill=gray!8, draw=gray!50]
+        (-2.2,-3.2) -- (-2.2,1.6) .. controls (-2.2,2.4) and (-1.2,2.6) ..
+        (0,2.6) .. controls (1.2,2.6) and (2.2,2.4) .. (2.2,1.6) --
+        (2.2,-3.2) -- cycle;
+    % shoulders
+    \draw[gray!50, fill=gray!8] (-2.2,1.6) -- (-3.0,0.6);
+    \draw[gray!50, fill=gray!8] (2.2,1.6) -- (3.0,0.6);
+
+    % enclosure
+    \node[draw=accent, very thick, fill=accentlight, rounded corners,
+          minimum width=26mm, minimum height=18mm] (box) at (0,-0.3)
+          {\small\bfseries ESP32 + AD8232};
+    \node[font=\scriptsize, below=0.5mm of box] {+ Li-ion battery};
+
+    % electrodes
+    \fill[red!70]  (-1.3,1.1) circle (3pt) node[above=1pt,font=\scriptsize]{RA};
+    \fill[blue!70] ( 1.3,1.1) circle (3pt) node[above=1pt,font=\scriptsize]{LA};
+    \fill[black!70](-0.0,-2.4) circle (3pt) node[below=1pt,font=\scriptsize]{RL (ref)};
+
+    % leads
+    \draw[red!70, thick]  (-1.3,1.1) .. controls (-1.1,0.6) .. (box.north west);
+    \draw[blue!70, thick] ( 1.3,1.1) .. controls ( 1.1,0.6) .. (box.north east);
+    \draw[black!70, thick](-0.0,-2.4) -- (box.south);
+  \end{tikzpicture}
+  \caption{Conceptual view of the wearable enclosure and three-electrode
+  placement. The case holds the ESP32, the AD8232 front-end and a battery.}
+  \label{fig:case}
+\end{figure}
+
+\paragraph{Device photographs.} The figures below show the actual built hardware.
+Each image is pulled from \texttt{doc/figures/}; if a file is ever absent, a framed
+placeholder box is drawn in its place so the document always compiles (see
+\texttt{figures/README.md}).
+
+\newcommand{\photoslot}[3]{%
+  % #1 = filename, #2 = caption, #3 = label
+  \begin{figure}[h]\centering
+    \IfFileExists{figures/#1}{%
+      \includegraphics[width=0.7\linewidth]{figures/#1}%
+    }{%
+      \fbox{\begin{minipage}[c][32mm][c]{0.7\linewidth}\centering
+        \ttfamily\small figures/#1\\[2pt]\normalfont\itshape (drop photo here)
+      \end{minipage}}%
+    }
+    \caption{#2}\label{#3}
+  \end{figure}}
+
+\photoslot{device_assembled.jpg}{Assembled ESP32 + AD8232 unit inside its case.}{fig:photo-device}
+\photoslot{electrodes.jpg}{The snap ECG electrodes used with the AD8232 front-end.}{fig:photo-electrodes}
+\photoslot{case_worn.jpg}{The enclosure worn on the torso.}{fig:photo-worn}

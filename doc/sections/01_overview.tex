@@ -1,0 +1,108 @@
+%==============================================================================
+\section{System Overview}
+%==============================================================================
+
+\subsection{What the system does}
+A Holter monitor is a portable device that records a patient's ECG continuously
+while they go about normal activity. This project implements a modern, networked
+variant: instead of storing the signal on the device for later review, the
+wearable node \emph{streams} the heart waveform over Wi-Fi so that a clinician
+can watch it live on a remote dashboard from anywhere on the network.
+
+The patient wears a small enclosure containing an ESP32 microcontroller and an
+\textbf{AD8232} single-lead ECG analog front-end. Three electrodes on the body
+feed the heart's electrical activity into the AD8232, which conditions it into a
+clean analog voltage. The ESP32 samples that voltage with its on-chip
+analog-to-digital converter (ADC) and pushes batches of samples to a server. The
+server filters the raw signal and broadcasts the result to every connected
+browser, where it is drawn as a scrolling waveform.
+
+\subsection{High-level architecture}
+The system is split into three tiers, summarised in
+Figure~\ref{fig:architecture}.
+
+\begin{description}[leftmargin=2.2cm,style=nextline]
+  \item[Acquisition] The ESP32 + AD8232 wearable node. Reads the analog ECG on
+        \texttt{GPIO36} at $\approx$\,250\,Hz and transmits 250-sample JSON
+        batches (one batch $\approx$ one second) over a Wi-Fi WebSocket.
+  \item[Processing] A Django backend running on the Channels/Daphne ASGI stack.
+        A WebSocket consumer receives each batch, runs an eight-stage DSP filter,
+        and fans the cleaned signal out to all dashboard clients.
+  \item[Visualisation] A single-page browser dashboard using Chart.js. It keeps a
+        rolling 1000-sample buffer and redraws the live trace as data arrives.
+\end{description}
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[node distance=16mm and 20mm]
+    % nodes
+    \node[hw] (pat) {Patient\\\scriptsize 3 electrodes};
+    \node[hw, right=of pat] (afe) {AD8232\\\scriptsize analog front-end};
+    \node[hw, right=of afe] (esp) {ESP32\\\scriptsize ADC + Wi-Fi};
+    \node[bk, below=18mm of esp] (srv) {Django + Channels\\\scriptsize ECGConsumer};
+    \node[bk, left=of srv] (dsp) {DSP filter\\\scriptsize filter\_ecg\_signal()};
+    \node[fe, left=of dsp] (web) {Browser\\\scriptsize Chart.js dashboard};
+
+    % flows
+    \draw[flow] (pat) -- (afe) node[midway,above,lbl]{mV};
+    \draw[flow] (afe) -- (esp) node[midway,above,lbl]{0--3.3\,V};
+    \draw[flow] (esp) -- (srv)
+       node[midway,right,lbl,align=left]{Wi-Fi WebSocket\\\texttt{\{"ecg":[...]\}}};
+    \draw[flow] (srv) -- (dsp);
+    \draw[flow] (dsp) -- (web)
+       node[midway,above,lbl,align=center]{WebSocket\\\texttt{\{"filtered":[...]\}}};
+
+    % grouping backgrounds
+    \begin{scope}[on background layer]
+      \node[draw=hwcol!80!black, dashed, rounded corners, fit=(pat)(afe)(esp),
+            inner sep=4mm, label={[font=\scriptsize\bfseries]above:Wearable node}] {};
+      \node[draw=bkcol!70!black, dashed, rounded corners, fit=(dsp)(srv),
+            inner sep=4mm, label={[font=\scriptsize\bfseries]below:Server (PC, port 8000)}] {};
+    \end{scope}
+  \end{tikzpicture}
+  \caption{End-to-end architecture. The wearable node digitises and transmits raw
+  ECG; the server filters it and broadcasts the cleaned waveform to the dashboard.}
+  \label{fig:architecture}
+\end{figure}
+
+\subsection{Technology stack}
+\begin{table}[h]
+  \centering
+  \small
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Tier} & \textbf{Technology} & \textbf{Role} \\
+    \midrule
+    Acquisition  & ESP32 (Arduino C++)        & Sampling and Wi-Fi transport \\
+                 & AD8232                     & Single-lead ECG analog front-end \\
+                 & ArduinoWebsockets, ArduinoJson & WebSocket client + JSON encoding \\
+    Processing   & Python 3, Django 5.1.7     & Web application framework \\
+                 & Django Channels + Daphne   & ASGI / WebSocket handling \\
+                 & NumPy, SciPy, PyWavelets   & ECG signal-processing pipeline \\
+    Visualisation& HTML5 + JavaScript         & Single-page dashboard \\
+                 & Chart.js 4.4.1             & Real-time line chart \\
+    \bottomrule
+  \end{tabular}
+  \caption{Components used at each tier of the system.}
+  \label{tab:stack}
+\end{table}
+
+\subsection{Repository layout}
+The relevant source lives in two top-level folders:
+\begin{lstlisting}[style=base,numbers=none]
+HolterMonitor/
+|-- arduino/
+|   `-- websocket_ecg_send_data/
+|       `-- websocket_ecg_send_data.ino   <- ESP32 firmware
+`-- holter_monitor/                       <- Django project
+    |-- manage.py
+    |-- send_fake_data.py                 <- hardware-free ECG simulator
+    |-- holter_monitor/                   <- project package
+    |   |-- settings.py  asgi.py  urls.py
+    `-- ecg/                              <- the ECG app
+        |-- consumers.py   <- WebSocket consumer (ECGConsumer)
+        |-- routing.py     <- ws/ecg/ route
+        |-- filters.py     <- 8-stage DSP pipeline
+        |-- views.py       <- serves the dashboard page
+        `-- templates/ecg.html            <- Chart.js dashboard
+\end{lstlisting}

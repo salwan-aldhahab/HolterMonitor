@@ -1,0 +1,154 @@
+%==============================================================================
+%  ECG Holter Monitor -- Technical / Developer Manual
+%  Master document. Compile with:  latexmk -pdf main.tex
+%  (or: pdflatex main.tex  x2,  then  bibtex main,  then pdflatex x2)
+%==============================================================================
+\documentclass[11pt,a4paper]{article}
+
+%------------------------------------------------------------------ packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds}
+\usepackage[hidelinks]{hyperref}
+
+%------------------------------------------------------------------ colours
+\definecolor{accent}{RGB}{0,110,90}
+\definecolor{accentlight}{RGB}{224,242,238}
+\definecolor{hwcol}{RGB}{210,235,255}
+\definecolor{bkcol}{RGB}{255,236,214}
+\definecolor{fecol}{RGB}{226,222,247}
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codecomment}{RGB}{110,120,120}
+\definecolor{codekw}{RGB}{0,90,160}
+\definecolor{codestr}{RGB}{160,60,30}
+\definecolor{linenum}{RGB}{160,160,160}
+
+%------------------------------------------------------------------ listings
+\lstdefinestyle{base}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestr},
+  numberstyle=\tiny\color{linenum},
+  numbers=left,
+  numbersep=8pt,
+  frame=single,
+  rulecolor=\color{linenum!60},
+  framesep=6pt,
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  columns=fullflexible,
+  keepspaces=true,
+  captionpos=b,
+}
+\lstdefinestyle{cpp}{style=base,language=C++}
+\lstdefinestyle{py}{style=base,language=Python}
+\lstdefinestyle{js}{style=base,language=Java}   % JS not built-in; Java highlighting is close
+\lstdefinestyle{jsonsty}{style=base}
+
+%------------------------------------------------------------------ headers
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{14pt}
+\lhead{\small\textsc{ECG Holter Monitor}}
+\rhead{\small Technical Manual}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\captionsetup{font=small,labelfont=bf}
+
+%------------------------------------------------------------------ tikz styles
+\tikzset{
+  block/.style   ={rectangle, rounded corners=3pt, draw=black!55, thick,
+                   align=center, minimum height=11mm, minimum width=26mm, font=\small},
+  hw/.style      ={block, fill=hwcol},
+  bk/.style      ={block, fill=bkcol},
+  fe/.style      ={block, fill=fecol},
+  stage/.style   ={rectangle, rounded corners=2pt, draw=accent, thick,
+                   fill=accentlight, align=center, text width=82mm,
+                   minimum height=9mm, font=\small},
+  flow/.style    ={-{Stealth[length=3mm]}, thick},
+  lbl/.style     ={font=\scriptsize\itshape, fill=white, inner sep=1pt},
+}
+
+%==============================================================================
+\begin{document}
+
+%------------------------------------------------------------------ title page
+\begin{titlepage}
+  \centering
+  \vspace*{2.5cm}
+  {\Huge\bfseries Wearable ECG Holter Monitor\par}
+  \vspace{0.6cm}
+  {\Large with an ESP32 Acquisition Node and a Remote Real-Time Dashboard\par}
+  \vspace{1.4cm}
+  \begin{tikzpicture}
+    \node[hw] (a) {Patient\\ + AD8232};
+    \node[hw, right=10mm of a] (b) {ESP32\\ (Wi-Fi)};
+    \node[bk, right=10mm of b] (c) {Django\\ Backend};
+    \node[fe, right=10mm of c] (d) {Browser\\ Dashboard};
+    \draw[flow] (a) -- (b);
+    \draw[flow] (b) -- (c) node[midway,above,lbl]{Wi-Fi};
+    \draw[flow] (c) -- (d) node[midway,above,lbl]{WS};
+  \end{tikzpicture}
+  \vspace{1.6cm}
+
+  {\large\textbf{Technical \& Developer Manual}\par}
+  \vspace{2.0cm}
+  {\large Salwan Aldhahab\par}
+  \vspace{0.4cm}
+  {\large\today\par}
+  \vfill
+  {\small This document describes the design, data flow, signal processing and
+  operation of the ECG Holter Monitor project.\par}
+\end{titlepage}
+
+%------------------------------------------------------------------ toc
+\tableofcontents
+\thispagestyle{fancy}
+\clearpage
+
+%------------------------------------------------------------------ abstract
+\section*{About this document}
+\addcontentsline{toc}{section}{About this document}
+This is a developer-oriented manual for the \emph{ECG Holter Monitor}, a wearable
+single-lead electrocardiogram (ECG) acquisition device that streams a patient's
+heart waveform to a remote dashboard in real time. The system has three
+cooperating parts: an ESP32 microcontroller node that digitises the analog ECG
+signal, a Django/Channels backend that cleans the signal with a digital signal
+processing (DSP) pipeline, and a browser dashboard that renders the live waveform.
+Each part is documented in its own section, followed by an end-to-end data-flow
+description, build/run instructions, and a list of known limitations.
+\clearpage
+
+%------------------------------------------------------------------ sections
+\input{sections/01_overview}
+\input{sections/02_hardware}
+\input{sections/03_backend}
+\input{sections/04_dsp}
+\input{sections/05_frontend}
+\input{sections/06_dataflow}
+\input{sections/07_build_run}
+\input{sections/08_limitations}
+
+%------------------------------------------------------------------ references
+\clearpage
+\nocite{*}
+\bibliographystyle{plain}
+\bibliography{references}
+\addcontentsline{toc}{section}{References}
+
+\end{document}

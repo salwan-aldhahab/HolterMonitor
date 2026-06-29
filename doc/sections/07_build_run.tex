@@ -1,0 +1,70 @@
+%==============================================================================
+\section{Building \& Running the System}
+%==============================================================================
+
+This section walks through bringing the whole system up. You can run the dashboard
+with real hardware or, for development, with the bundled software simulator.
+
+\subsection{Prerequisites}
+\begin{itemize}[noitemsep]
+  \item Python 3.10+ on the server machine.
+  \item Arduino IDE (or PlatformIO) with the ESP32 board support package, plus the
+        \texttt{ArduinoWebsockets} and \texttt{ArduinoJson} libraries -- only needed
+        for real hardware.
+  \item An ESP32 development board and an AD8232 ECG module with electrodes -- only
+        needed for real hardware.
+\end{itemize}
+
+\subsection{1. Backend server}
+From the \texttt{holter\_monitor/} project directory:
+\begin{lstlisting}[style=base,caption={Set up and run the Django/Channels server.}]
+# create and activate a virtual environment
+python -m venv venv
+venv\Scripts\activate            # Windows
+# source venv/bin/activate       # macOS / Linux
+
+# install dependencies
+pip install django channels daphne numpy scipy PyWavelets websockets
+
+# apply Django's built-in migrations and start the server
+python manage.py migrate
+python manage.py runserver 0.0.0.0:8000
+\end{lstlisting}
+
+Because \texttt{daphne} and \texttt{channels} are installed and
+\texttt{ASGI\_APPLICATION} is set, \texttt{runserver} starts the ASGI/WebSocket
+server automatically. Binding to \texttt{0.0.0.0} makes the server reachable from
+the ESP32 and from other machines on the LAN. Then open
+\texttt{http://localhost:8000/} (or \texttt{http://<server-ip>:8000/} from another
+device) to load the dashboard.
+
+\subsection{2a. Run with the ESP32 (real ECG)}
+\begin{enumerate}[noitemsep]
+  \item Open \texttt{arduino/websocket\_ecg\_send\_data/websocket\_ecg\_send\_data.ino}.
+  \item Set \texttt{ssid}, \texttt{password} and \texttt{websocket\_server\_host}
+        (your server's LAN IP) near the top of the sketch.
+  \item Wire the AD8232 output to \texttt{GPIO36} and power the board from 3.3\,V.
+  \item Select your ESP32 board and port, then upload.
+  \item Open the Serial Monitor at 115200 baud to watch it connect and stream;
+        the dashboard trace should begin scrolling.
+\end{enumerate}
+
+\subsection{2b. Run without hardware (simulator)}
+The repository includes \texttt{holter\_monitor/send\_fake\_data.py}, which connects
+to the same WebSocket endpoint and pushes a synthetic ECG-like waveform (a noisy
+sine) at the same rate the device would. With the server running:
+\begin{lstlisting}[style=base,numbers=none]
+python send_fake_data.py
+\end{lstlisting}
+This is the quickest way to verify the backend, DSP pipeline and dashboard without
+any electronics. Note that the simulator feeds the \emph{same} \texttt{ecg\_group},
+so the filtered output appears on every open dashboard exactly as real data would.
+
+\subsection{Verifying it works}
+\begin{itemize}[noitemsep]
+  \item The dashboard page shows a scrolling lime waveform.
+  \item The server console logs each received batch and broadcast.
+  \item The browser console logs ``WebSocket connected'' and per-batch previews.
+  \item With a real AD8232, the QRS spikes of the heartbeat are visible in the
+        trace.
+\end{itemize}

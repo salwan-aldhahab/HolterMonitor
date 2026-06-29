@@ -1,0 +1,63 @@
+%==============================================================================
+\section{Frontend: Live Dashboard}
+%==============================================================================
+
+The dashboard is a single self-contained page,
+\texttt{ecg/templates/ecg.html}, served at the site root. It pulls Chart.js
+4.4.1 from a CDN and draws the heart waveform on a dark background, refreshed in
+real time as cleaned batches arrive over the WebSocket.
+
+\subsection{Rolling buffer and chart}
+The page keeps a fixed-length \emph{rolling buffer} of 1000 samples (about four
+seconds of signal at 250\,Hz). Each incoming batch is appended to the right while
+the oldest samples drop off the left, producing the familiar scrolling-trace
+effect of a bedside monitor. The chart's $y$-axis is pinned to the ADC range
+$0$--$4095$ so the waveform's scale is stable, and animation is disabled so
+updates are instantaneous.
+
+\begin{table}[h]
+  \centering\small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Setting} & \textbf{Value} \\
+    \midrule
+    Charting library   & Chart.js 4.4.1 (CDN) \\
+    Chart type         & line, no point markers, slight tension (0.2) \\
+    Buffer size        & 1000 samples ($\approx$4\,s window) \\
+    $y$-axis range     & 0--4095 (fixed, matches ADC) \\
+    $x$-axis           & linear sample index, hidden \\
+    Animation          & disabled (real-time redraw) \\
+    Trace colour       & lime on near-black background \\
+    \bottomrule
+  \end{tabular}
+  \caption{Dashboard chart configuration.}
+  \label{tab:chart}
+\end{table}
+
+\subsection{Receiving data}
+The page opens a WebSocket back to the same host it was served from, so no
+hard-coded server address is needed in the browser. Each message is a
+\texttt{\{"filtered":[...]\}} array; the handler shifts the buffer and redraws.
+
+\begin{lstlisting}[style=js,caption={Dashboard WebSocket handler and buffer update (abridged).}]
+const BUFFER_SIZE = 1000;
+let ecgBuffer = Array(BUFFER_SIZE).fill(0);
+
+const ws = new WebSocket("ws://" + window.location.host + "/ws/ecg/");
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  const incoming = msg.filtered || msg.ecg;          // cleaned samples
+  if (Array.isArray(incoming)) {
+    // drop oldest, append newest -> scrolling trace
+    ecgBuffer = ecgBuffer.slice(incoming.length).concat(incoming);
+    ecgChart.data.datasets[0].data = ecgBuffer;
+    ecgChart.update();
+  }
+};
+\end{lstlisting}
+
+Because the dashboard subscribes to the very same \texttt{ecg\_group} the server
+broadcasts to, opening the page in several browsers shows the same live trace in
+all of them simultaneously -- this is what makes the monitor ``remote'': any
+machine that can reach the server can watch the patient's ECG.

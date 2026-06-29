@@ -1,0 +1,64 @@
+%==============================================================================
+\section{Limitations \& Future Work}
+\label{sec:limitations}
+%==============================================================================
+
+The project is a working proof of concept that demonstrates the full
+acquisition\,$\rightarrow$\,processing\,$\rightarrow$\,visualisation loop. The
+following items would be needed to harden it toward clinical or production use.
+
+\subsection{Security}
+\begin{itemize}[noitemsep]
+  \item \textbf{Hard-coded credentials.} The firmware embeds the Wi-Fi SSID and
+        password, and the server IP, as source constants. These should be moved to
+        an un-committed secrets header (or provisioned at runtime) and never shared
+        in a public repository.
+  \item \textbf{Development Django settings.} \texttt{DEBUG = True},
+        \texttt{ALLOWED\_HOSTS = ['*']} and a committed \texttt{SECRET\_KEY} are all
+        unsafe for deployment. Set \texttt{DEBUG = False}, restrict the allowed
+        hosts, and load the secret key from the environment.
+  \item \textbf{No authentication or transport encryption.} The dashboard and the
+        WebSocket are open to anyone on the network, and traffic is plain
+        \texttt{ws://}. Patient ECG is sensitive data; production should add login,
+        per-patient authorisation, and TLS (\texttt{wss://}/HTTPS).
+\end{itemize}
+
+\subsection{Scalability and robustness}
+\begin{itemize}[noitemsep]
+  \item \textbf{In-memory channel layer.} \texttt{InMemoryChannelLayer} works only
+        within a single process. To run multiple workers or hosts, switch to
+        \texttt{channels\_redis} with a Redis backend.
+  \item \textbf{Single shared group.} All devices and viewers share one
+        \texttt{ecg\_group}, so a second patient's device would mix into the same
+        stream. Per-patient groups/rooms (e.g.\ \texttt{ecg\_<patient\_id>}) are
+        needed for multiple simultaneous patients.
+  \item \textbf{Latency.} Filling a 250-sample batch adds about one second of
+        latency before display. Smaller batches reduce latency at the cost of more
+        messages.
+\end{itemize}
+
+\subsection{Data and clinical features}
+\begin{itemize}[noitemsep]
+  \item \textbf{No persistence.} Samples are streamed but never stored;
+        \texttt{ecg/models.py} is empty. Adding models for patients and recorded
+        sessions would enable playback, export and offline review -- the defining
+        feature of a true Holter monitor.
+  \item \textbf{No analytics.} Heart-rate, R-R interval and arrhythmia detection
+        could be layered on top of the existing R-peak detection already present in
+        the DSP pipeline (Stage~7).
+  \item \textbf{Single lead.} The AD8232 provides one lead; multi-lead acquisition
+        would broaden diagnostic value.
+\end{itemize}
+
+\subsection{Hardware}
+\begin{itemize}[noitemsep]
+  \item \textbf{Power management.} Battery life, charging and low-power sleep
+        between batches are not yet addressed.
+  \item \textbf{Enclosure.} The wearable case is documented conceptually; published
+        CAD/STL files and printed-part drawings would make the build reproducible.
+\end{itemize}
+
+\bigskip
+\noindent\emph{In short: the signal path is complete and the DSP is genuinely
+sophisticated; the remaining work is mostly the productionisation around it ---
+security, persistence, multi-patient support and deployment.}

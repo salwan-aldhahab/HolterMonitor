@@ -1,0 +1,103 @@
+%==============================================================================
+\section{Backend: Django + Channels}
+%==============================================================================
+
+\subsection{Why ASGI and Channels}
+A classic Django request/response cycle cannot hold a long-lived, bidirectional
+connection open, which is exactly what streaming ECG needs. The project therefore
+runs on the asynchronous \textbf{ASGI} stack: \textbf{Django Channels} adds
+WebSocket support and \textbf{Daphne} serves the application. The same server
+process handles ordinary HTTP (to serve the dashboard page) and WebSockets (to
+carry ECG data).
+
+The protocol routing is defined in \texttt{holter\_monitor/asgi.py}: HTTP goes to
+the standard Django application, while WebSocket connections are routed through
+the ECG app's URL patterns.
+
+\begin{lstlisting}[style=py,caption={ASGI routing -- HTTP and WebSocket on one server.}]
+application = ProtocolTypeRouter({
+    "http": get_asgi_application(),
+    "websocket": AuthMiddlewareStack(
+        URLRouter(websocket_urlpatterns)   # from ecg/routing.py
+    ),
+})
+\end{lstlisting}
+
+The WebSocket route (\texttt{ecg/routing.py}) maps the path \texttt{ws/ecg/} to the
+\texttt{ECGConsumer}:
+\begin{lstlisting}[style=py,numbers=none]
+websocket_urlpatterns = [
+    re_path(r'ws/ecg/$', ECGConsumer.as_asgi()),
+]
+\end{lstlisting}
+
+\subsection{The ECG consumer}
+\texttt{ECGConsumer} (\texttt{ecg/consumers.py}) is the heart of the backend. Both
+the ESP32 \emph{and} every dashboard browser connect to the same
+\texttt{ws/ecg/} endpoint, and all of them are placed into a single Channels
+\emph{group} called \texttt{ecg\_group}. This group is what lets one producer (the
+ESP32) fan its data out to many consumers (the dashboards):
+
+\begin{itemize}[noitemsep]
+  \item \textbf{\texttt{connect()}} -- accepts the socket and adds the channel to
+        \texttt{ecg\_group}.
+  \item \textbf{\texttt{receive()}} -- parses an incoming \texttt{\{"ecg":[...]\}}
+        message, runs it through \texttt{filter\_ecg\_signal()}, and broadcasts the
+        cleaned array to the whole group via \texttt{group\_send}.
+  \item \textbf{\texttt{send\_ecg()}} -- the group handler; serialises the cleaned
+        array as \texttt{\{"filtered":[...]\}} and pushes it down each socket.
+  \item \textbf{\texttt{disconnect()}} -- removes the channel from the group.
+\end{itemize}
+
+\begin{lstlisting}[style=py,caption={Receiving raw ECG, filtering it, and broadcasting to the group.}]
+class ECGConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        await self.channel_layer.group_add("ecg_group", self.channel_name)
+        await self.accept()
+
+    async def receive(self, text_data):
+        data = json.loads(text_data)
+        raw  = data.get("ecg", [])
+        filtered = filter_ecg_signal(raw)          # DSP pipeline (Section 4)
+        await self.channel_layer.group_send(
+            "ecg_group",
+            {"type": "send_ecg", "data": filtered}, # -> send_ecg()
+        )
+
+    async def send_ecg(self, event):
+        await self.send(text_data=json.dumps({"filtered": event["data"]}))
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard("ecg_group", self.channel_name)
+\end{lstlisting}
+
+\subsection{Channel layer}
+Groups are backed by a \emph{channel layer}. The project uses the in-memory layer,
+configured in \texttt{settings.py}:
+\begin{lstlisting}[style=py,numbers=none]
+CHANNEL_LAYERS = {
+    "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+}
+\end{lstlisting}
+The in-memory layer is simple and dependency-free, which is ideal for a single
+development server. It does not, however, share state across multiple processes,
+so a production deployment would swap in the Redis channel layer
+(see Section~\ref{sec:limitations}).
+
+\subsection{Serving the dashboard page}
+The dashboard itself is plain HTTP. A single view renders the template, wired to
+the site root in \texttt{holter\_monitor/urls.py}:
+\begin{lstlisting}[style=py,numbers=none]
+# ecg/views.py
+def ecg_view(request):
+    return render(request, "ecg.html")
+
+# holter_monitor/urls.py
+urlpatterns = [ path('', ecg_view) ]
+\end{lstlisting}
+
+\subsection{Data model}
+The current build streams in real time and does \emph{not} persist samples:
+\texttt{ecg/models.py} defines no models and there are no migrations beyond
+Django's built-ins. Adding stored, per-patient recordings is the most obvious
+extension and is listed in Section~\ref{sec:limitations}.
